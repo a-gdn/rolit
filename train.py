@@ -156,13 +156,14 @@ def evaluate_vs_best(env, current_model, best_model_path, sims, games):
     if not os.path.exists(best_model_path):
         return 1.0 # Current is champion by default if no history
 
-    print(f"ARENA: Pitting Current Model vs Best Model ({games} games)...")
     best_model = tf.keras.models.load_model(best_model_path, compile=False)
     
     wins = 0
     draws = 0
     
     for i in range(games):
+        print(f"Arena: Pitting Current vs Best Model, Game {i + 1}/{games}...", end='\r')
+
         # Swap sides: Current model plays P1, P2, P3, ... in a cycle
         start_player_current = (i % env.num_players) + 1
         
@@ -297,10 +298,10 @@ if __name__ == "__main__":
         
         # Update Champion if we are significantly better (55% threshold)
         if win_rate >= 0.55:
-            print(">>> NEW CHAMPION! Updating Best Model snapshot. <<<")
+            print("New Champion! Updating the best model")
             model.save(BEST_MODEL_PATH)
         else:
-            print("Current model failed to beat the best snapshot.")
+            print("Current model failed to beat the best model")
 
         # D. LOGGING & SAVING
         model.save(MODEL_PATH)
