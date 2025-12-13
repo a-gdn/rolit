@@ -1,0 +1,26 @@
+# -----------------------------
+# 1. Trained Model Files (Keras)
+# -----------------------------
+# Ignore all Keras model files, which are typically large binary files
+# and should not be tracked in Git.
+*.keras
+
+# -----------------------------
+# 2. Log Files/Folders
+# -----------------------------
+# Ignore the training log directory, which contains large, transient
+# data like TensorBoard logs.
+/logs/
+
+# -----------------------------
+# 3. Cache and Other Python Files
+# -----------------------------
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+
+# -----------------------------
+# 4. Data / Buffer Files (Optional but Recommended)
+# -----------------------------
+# Ignore pickled replay buffers or temporary data stores
+*.pkl
