@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers, models, optimizers, regularizers
+from tensorflow.keras import layers, models, optimizers, regularizers # type: ignore
 import math
 from collections import defaultdict
 import random
