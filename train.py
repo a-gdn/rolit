@@ -29,12 +29,13 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # ==========================================
 LEARNING_RATE = 0.001
 ITERATIONS = 100         
-EPISODES_PER_ITER = 10   
+EPISODES_PER_ITER = 20   
 MCTS_SIMS = 400          
 BATCH_SIZE = 256
 EPOCHS = 3
 BUFFER_SIZE = 100000 
-RESIDUAL_BLOCKS = 5      
+RESIDUAL_BLOCKS = 5  
+ARENA_FREQ = 3    
 
 DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25 
@@ -229,9 +230,13 @@ if __name__ == "__main__":
                 pickle.dump(buffer, f)
         
         # Arena
-        win_rate = evaluate_vs_best(env, model, BEST_MODEL_PATH, sims=MCTS_SIMS, games=10)
-        print(f"Arena Win Rate: {win_rate*100:.1f}%")
-        
-        if win_rate >= 0.55:
-            print("New Champion! Saving best model.")
-            model.save(BEST_MODEL_PATH)
+        if (iteration + 1) % ARENA_FREQ == 0:
+            # Arena
+            win_rate = evaluate_vs_best(env, model, BEST_MODEL_PATH, sims=MCTS_SIMS, games=10)
+            print(f"Arena Win Rate: {win_rate*100:.1f}%")
+            
+            if win_rate >= 0.55:
+                print("New Champion! Saving best model.")
+                model.save(BEST_MODEL_PATH)
+        else:
+            print("Arena: Skipped (Not an evaluation iteration).")
