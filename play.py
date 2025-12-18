@@ -192,7 +192,20 @@ if __name__ == "__main__":
         print("Forcing 2 players for Othello.")
         args.num_players = 2
 
-    model_name = f"best_{args.variant}_{args.num_players}p.keras"
+    # Path Construction
+    model_dir = "models"
+    model_filename = f"best_model_{args.variant}_{args.num_players}p.keras"
+    model_path = os.path.join(model_dir, model_filename)
     
+    # Comprehensive Existence Check
+    if not os.path.isdir(model_dir):
+        print(f"Error: The directory '{model_dir}' does not exist.")
+        exit(1)
+    
+    if not os.path.isfile(model_path):
+        print(f"Error: Model file not found at {model_path}")
+        print(f"Make sure you have trained a {args.num_players}-player model for {args.variant}.")
+        exit(1)
+
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-    play_game(model_name, args.player, args.sims, args.num_players, args.variant)
+    play_game(model_path, args.player, args.sims, args.num_players, args.variant)
