@@ -29,13 +29,13 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # ==========================================
 LEARNING_RATE = 0.001
 ITERATIONS = 100         
-EPISODES_PER_ITER = 12  
+EPISODES_PER_ITER = 10  
 MCTS_SIMS = 400          
 BATCH_SIZE = 256
 EPOCHS = 3
 BUFFER_SIZE = 100000 
 RESIDUAL_BLOCKS = 5  
-ARENA_FREQ = 2    
+ARENA_FREQ = 3
 
 DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25 
@@ -169,9 +169,14 @@ if __name__ == "__main__":
     # Unique identifiers for file paths
     ID_STR = f"{args.variant}_{args.num_players}p"
     
-    MODEL_PATH = f"model_{ID_STR}.keras"
-    BEST_MODEL_PATH = f"best_{ID_STR}.keras"
-    BUFFER_PATH = f"buffer_{ID_STR}.pkl"
+    # --- UPDATED PATHS ---
+    MODELS_DIR = "models"
+    # Ensure the directory exists (just in case)
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    
+    MODEL_PATH = os.path.join(MODELS_DIR, f"model_{ID_STR}.keras")      # The "current" training checkpoint
+    BEST_MODEL_PATH = os.path.join(MODELS_DIR, f"best_{ID_STR}.keras") # The champion
+    BUFFER_PATH = os.path.join(MODELS_DIR, f"buffer_{ID_STR}.pkl")     # I moved the buffer here too for cleanliness
     LOG_DIR = f"logs/{ID_STR}"
     
     env = RolitEnv(BOARD_SIZE, args.num_players, args.variant)
@@ -182,19 +187,34 @@ if __name__ == "__main__":
             buffer = pickle.load(f)
         print(f"Loaded buffer for {ID_STR}: {len(buffer)} samples.")
     else:
+        print("No buffer found. Starting with empty buffer.")
         buffer = ReplayBuffer(BUFFER_SIZE)
 
-    # 2. MODEL
+    # 2. MODEL LOADING (Updated for "Hot Start")
     INPUT_PLANES = args.num_players + 1
+    
+    # Priority 1: Resume from the "current" checkpoint (if script crashed mid-training)
     if os.path.exists(MODEL_PATH):
+        print(f"Loaded existing checkpoint: {MODEL_PATH}")
         model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-        model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE), 
-                      loss={'policy': 'categorical_crossentropy', 'value': 'mse'})
-        print(f"Loaded model: {MODEL_PATH}")
-    else:
-        model = build_model(INPUT_PLANES, RESIDUAL_BLOCKS, LEARNING_RATE)
-        print(f"Created new model: {MODEL_PATH}")
 
+    # Priority 2: Resume from "Best Model" (Your specific request)
+    # If we don't have a current training file, but we have a champion, start from the champion.
+    elif os.path.exists(BEST_MODEL_PATH):
+        print(f"No checkpoint found, but found best model: {BEST_MODEL_PATH}")
+        print("Loading best model to resume training...")
+        model = tf.keras.models.load_model(BEST_MODEL_PATH, compile=False)
+
+    # Priority 3: Start from scratch
+    else:
+        print(f"No models found at all. Creating new model: {MODEL_PATH}")
+        model = build_model(INPUT_PLANES, RESIDUAL_BLOCKS, LEARNING_RATE)
+
+    # Compile the loaded or created model
+    model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE), 
+                  loss={'policy': 'categorical_crossentropy', 'value': 'mse'})
+
+    # If the best model doesn't exist yet (fresh start), save the initialized model as best
     if not os.path.exists(BEST_MODEL_PATH):
         model.save(BEST_MODEL_PATH)
 
@@ -206,6 +226,7 @@ if __name__ == "__main__":
         # Self Play
         new_samples = 0
         for i in range(EPISODES_PER_ITER):
+            # Pass BEST_MODEL_PATH to self_play? No, standard AlphaZero self-plays with the current model
             data = self_play(env, model, MCTS_SIMS) 
             for sample in data:
                 buffer.add(*sample)
@@ -224,14 +245,14 @@ if __name__ == "__main__":
                     losses_val.append(metrics[2])
             print(f"\nLoss: Policy={np.mean(losses_pol):.4f} | Value={np.mean(losses_val):.4f}")
             
-            # Save checkpoint
+            # Save checkpoint to the new folder
             model.save(MODEL_PATH)
             with open(BUFFER_PATH, "wb") as f:
                 pickle.dump(buffer, f)
         
         # Arena
         if (iteration + 1) % ARENA_FREQ == 0:
-            # Arena
+            # Arena vs Best
             win_rate = evaluate_vs_best(env, model, BEST_MODEL_PATH, sims=MCTS_SIMS, games=10)
             print(f"Arena Win Rate: {win_rate*100:.1f}%")
             
