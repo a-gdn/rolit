@@ -3,10 +3,12 @@ import tensorflow as tf
 import curses
 import argparse
 import os
+import sys
 import time
 
 # Import common game logic and MCTS implementation
-from common import RolitEnv, MCTS, get_next_player, DEFAULT_NUM_PLAYERS, DEFAULT_VARIANT, BOARD_SIZE
+from common import (RolitEnv, MCTS, get_next_player, get_user_input, 
+                    DEFAULT_NUM_PLAYERS, DEFAULT_VARIANT, BOARD_SIZE)
 
 # ==========================================
 # 1. INTERFACE (CURSES)
@@ -181,16 +183,35 @@ def play_game(model_path, human_player, sims, num_players, variant):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--variant', default=DEFAULT_VARIANT, choices=['othello', 'rolit', 'free_rolit'], help='Game variant')
-    parser.add_argument('--player', type=int, default=1, choices=[1, 2, 3, 4], help='Human player ID')
-    parser.add_argument('--sims', type=int, default=400, help='MCTS simulations')
-    parser.add_argument('--num_players', type=int, default=DEFAULT_NUM_PLAYERS, choices=[2, 3, 4])
+    # We removed defaults from argparse so we can detect if they are missing
+    parser.add_argument('--variant', choices=['othello', 'rolit', 'free_rolit'], help='Game variant')
+    parser.add_argument('--player', type=int, choices=[1, 2, 3, 4], help='Human player ID')
+    parser.add_argument('--sims', type=int, help='MCTS simulations')
+    parser.add_argument('--num_players', type=int, choices=[2, 3, 4])
     args = parser.parse_args()
     
-    # Enforce Othello constraint
+    # --- INTERACTIVE WIZARD ---    
+    if args.variant is None:
+        args.variant = get_user_input("Select Variant", DEFAULT_VARIANT, ['othello', 'rolit', 'free_rolit'])
+
+    if args.num_players is None:
+        if args.variant == 'othello':
+            args.num_players = 2
+            print("Othello automatically selected for 2 players.")
+        else:
+            args.num_players = get_user_input("Select Number of Players", DEFAULT_NUM_PLAYERS, [2, 3, 4], int)
+            
     if args.variant == 'othello' and args.num_players != 2:
         print("Forcing 2 players for Othello.")
         args.num_players = 2
+
+    # Dynamically valid player options based on num_players
+    valid_human_players = list(range(1, args.num_players + 1))
+    if args.player is None:
+        args.player = get_user_input("Which player are you?", 1, valid_human_players, int)
+
+    if args.sims is None:
+        args.sims = get_user_input("AI Simulation Count", 400, None, int)
 
     # Path Construction
     model_dir = "models"
@@ -200,12 +221,13 @@ if __name__ == "__main__":
     # Comprehensive Existence Check
     if not os.path.isdir(model_dir):
         print(f"Error: The directory '{model_dir}' does not exist.")
-        exit(1)
+        sys.exit(1)
     
     if not os.path.isfile(model_path):
-        print(f"Error: Model file not found at {model_path}")
-        print(f"Make sure you have trained a {args.num_players}-player model for {args.variant}.")
-        exit(1)
+        print(f"\n[!] Error: Model file not found.")
+        print(f"    Looked for: {model_path}")
+        print(f"    Please run train.py first for {args.variant} with {args.num_players} players.")
+        sys.exit(1)
 
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     play_game(model_path, args.player, args.sims, args.num_players, args.variant)

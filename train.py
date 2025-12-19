@@ -3,13 +3,14 @@ import numpy as np
 import tensorflow as tf
 from collections import deque
 import os
+import sys # Added sys
 import pickle
 import subprocess
 import atexit
 import argparse
 
 from common import (
-    RolitEnv, MCTS, preprocess_state, build_model, get_next_player, 
+    RolitEnv, MCTS, preprocess_state, build_model, get_next_player, get_user_input,
     BOARD_SIZE, DEFAULT_NUM_PLAYERS, DEFAULT_VARIANT
 )
 
@@ -158,12 +159,24 @@ def evaluate_vs_best(env, current_model, best_model_path, sims, games):
 # ==========================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_players', type=int, default=DEFAULT_NUM_PLAYERS, choices=[2, 3, 4])
-    parser.add_argument('--variant', default=DEFAULT_VARIANT, choices=['othello', 'rolit', 'free_rolit'])
+    parser.add_argument('--num_players', type=int, choices=[2, 3, 4])
+    parser.add_argument('--variant', choices=['othello', 'rolit', 'free_rolit'])
     args = parser.parse_args()
     
+    # --- INTERACTIVE WIZARD ---
+    # If arguments are missing, ask the user interactively
+    if args.variant is None:
+        args.variant = get_user_input("Select Variant", DEFAULT_VARIANT, ['othello', 'rolit', 'free_rolit'])
+    
+    if args.num_players is None:
+        if args.variant == 'othello':
+            print("Othello automatically selected for 2 players.")
+            args.num_players = 2
+        else:
+            args.num_players = get_user_input("Select Number of Players", DEFAULT_NUM_PLAYERS, [2, 3, 4], int)
+    
     if args.variant == 'othello' and args.num_players != 2:
-        print("Warning: Othello forces 2 players.")
+        print("Warning: Othello forces 2 players. Resetting to 2.")
         args.num_players = 2
     
     # Unique identifiers for file paths
@@ -171,12 +184,11 @@ if __name__ == "__main__":
     
     # --- UPDATED PATHS ---
     MODELS_DIR = "models"
-    # Ensure the directory exists (just in case)
     os.makedirs(MODELS_DIR, exist_ok=True)
     
-    MODEL_PATH = os.path.join(MODELS_DIR, f"model_{ID_STR}.keras")      # The "current" training checkpoint
-    BEST_MODEL_PATH = os.path.join(MODELS_DIR, f"best_{ID_STR}.keras") # The champion
-    BUFFER_PATH = os.path.join(MODELS_DIR, f"buffer_{ID_STR}.pkl")     # I moved the buffer here too for cleanliness
+    MODEL_PATH = os.path.join(MODELS_DIR, f"model_{ID_STR}.keras")      
+    BEST_MODEL_PATH = os.path.join(MODELS_DIR, f"best_{ID_STR}.keras") 
+    BUFFER_PATH = os.path.join(MODELS_DIR, f"buffer_{ID_STR}.pkl")     
     LOG_DIR = f"logs/{ID_STR}"
     
     env = RolitEnv(BOARD_SIZE, args.num_players, args.variant)
@@ -187,19 +199,18 @@ if __name__ == "__main__":
             buffer = pickle.load(f)
         print(f"Loaded buffer for {ID_STR}: {len(buffer)} samples.")
     else:
-        print("No buffer found. Starting with empty buffer.")
+        print(f"No buffer found at {BUFFER_PATH}. Starting with empty buffer.")
         buffer = ReplayBuffer(BUFFER_SIZE)
 
-    # 2. MODEL LOADING (Updated for "Hot Start")
+    # 2. MODEL
     INPUT_PLANES = args.num_players + 1
     
-    # Priority 1: Resume from the "current" checkpoint (if script crashed mid-training)
+    # Priority 1: Resume from current checkpoint
     if os.path.exists(MODEL_PATH):
         print(f"Loaded existing checkpoint: {MODEL_PATH}")
         model = tf.keras.models.load_model(MODEL_PATH, compile=False)
 
-    # Priority 2: Resume from "Best Model" (Your specific request)
-    # If we don't have a current training file, but we have a champion, start from the champion.
+    # Priority 2: Resume from Best Model (Hot Start)
     elif os.path.exists(BEST_MODEL_PATH):
         print(f"No checkpoint found, but found best model: {BEST_MODEL_PATH}")
         print("Loading best model to resume training...")
@@ -207,18 +218,16 @@ if __name__ == "__main__":
 
     # Priority 3: Start from scratch
     else:
-        print(f"No models found at all. Creating new model: {MODEL_PATH}")
+        print(f"No models found. Creating new model: {MODEL_PATH}")
         model = build_model(INPUT_PLANES, RESIDUAL_BLOCKS, LEARNING_RATE)
 
-    # Compile the loaded or created model
     model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE), 
                   loss={'policy': 'categorical_crossentropy', 'value': 'mse'})
 
-    # If the best model doesn't exist yet (fresh start), save the initialized model as best
     if not os.path.exists(BEST_MODEL_PATH):
         model.save(BEST_MODEL_PATH)
 
-    print(f"Starting Training: {ITERATIONS} Iterations | Variant: {args.variant} | Players: {args.num_players}")
+    print(f"\nStarting Training: {ITERATIONS} Iterations | Variant: {args.variant} | Players: {args.num_players}")
 
     for iteration in range(ITERATIONS):
         print(f"\n--- Iteration {iteration+1}/{ITERATIONS} ---")
@@ -226,7 +235,6 @@ if __name__ == "__main__":
         # Self Play
         new_samples = 0
         for i in range(EPISODES_PER_ITER):
-            # Pass BEST_MODEL_PATH to self_play? No, standard AlphaZero self-plays with the current model
             data = self_play(env, model, MCTS_SIMS) 
             for sample in data:
                 buffer.add(*sample)
@@ -245,14 +253,13 @@ if __name__ == "__main__":
                     losses_val.append(metrics[2])
             print(f"\nLoss: Policy={np.mean(losses_pol):.4f} | Value={np.mean(losses_val):.4f}")
             
-            # Save checkpoint to the new folder
+            # Save checkpoint
             model.save(MODEL_PATH)
             with open(BUFFER_PATH, "wb") as f:
                 pickle.dump(buffer, f)
         
         # Arena
         if (iteration + 1) % ARENA_FREQ == 0:
-            # Arena vs Best
             win_rate = evaluate_vs_best(env, model, BEST_MODEL_PATH, sims=MCTS_SIMS, games=10)
             print(f"Arena Win Rate: {win_rate*100:.1f}%")
             

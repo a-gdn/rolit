@@ -4,6 +4,7 @@ from tensorflow.keras import layers, models, optimizers, regularizers # type: ig
 import math
 from collections import defaultdict
 import random
+import sys 
 
 # ==========================================
 # 0. CONFIGURATION & HELPERS
@@ -16,6 +17,32 @@ DEFAULT_VARIANT = 'free_rolit' # Options: 'othello', 'rolit', 'free_rolit'
 def get_next_player(current_player, num_players):
     """Calculates the ID of the next player."""
     return (current_player % num_players) + 1
+
+def get_user_input(prompt, default, valid_options=None, value_type=str):
+    """Helper to ask user for input in the terminal."""
+    while True:
+        # Format the prompt to show options and default
+        options_str = f" [{'/'.join(map(str, valid_options))}]" if valid_options else ""
+        full_prompt = f"{prompt}{options_str} (Default: {default}): "
+        
+        user_in = input(full_prompt).strip()
+        
+        # If empty, return default
+        if not user_in:
+            return default
+            
+        try:
+            # Convert type
+            val = value_type(user_in)
+            
+            # Check options
+            if valid_options and val not in valid_options:
+                print(f"Invalid choice. Please choose from: {valid_options}")
+                continue
+                
+            return val
+        except ValueError:
+            print(f"Invalid input type. Expected {value_type.__name__}.")
 
 # ==========================================
 # 1. GAME LOGIC
