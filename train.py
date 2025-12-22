@@ -8,10 +8,11 @@ import pickle
 import subprocess
 import atexit
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from common import (
     RolitEnv, MCTS, preprocess_state, build_model, get_next_player, get_user_input,
-    BOARD_SIZE, DEFAULT_NUM_PLAYERS, DEFAULT_VARIANT
+    BOARD_SIZE, DEFAULT_NUM_PLAYERS, DEFAULT_VARIANT, ensure_compiled_infer
 )
 
 # ==========================================
@@ -47,13 +48,15 @@ print("Mixed precision policy:", mixed_precision.global_policy().name)
 # ==========================================
 LEARNING_RATE = 0.001
 ITERATIONS = 100         
-EPISODES_PER_ITER = 10  
 MCTS_SIMS = 400          
 BATCH_SIZE = 256
 EPOCHS = 3
 BUFFER_SIZE = 100000 
 RESIDUAL_BLOCKS = 5  
 ARENA_FREQ = 3
+
+# Batch size for parallel self-play games (run this many games concurrently)
+SELF_PLAY_BATCH = 16
 
 DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25 
@@ -125,7 +128,48 @@ def self_play(env, model, sims):
                 data.append((np.fliplr(rot_state), np.fliplr(rot_pi).flatten(), z))
         else:
             data.append((state, pi, z)) 
+    # Return collected training samples only
     return data
+
+
+def parallel_self_play(env, model, sims, batch_size, max_workers=None):
+    """Run `batch_size` self-play games in parallel and return concatenated data.
+
+    Each game uses an independent RolitEnv instance and an independent MCTS so
+    that model calls may be interleaved across threads and the GPU can be utilized.
+    """
+    if max_workers is None:
+        max_workers = min(batch_size, (os.cpu_count() or 4))
+
+    games_data = []
+
+    def _worker(_idx):
+        e = RolitEnv(env.board_size, env.num_players, env.variant)
+        return self_play(e, model, sims)
+
+    moves = []
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_worker, i) for i in range(batch_size)]
+        for fut in as_completed(futures):
+            try:
+                # Each worker returns a list of samples
+                samples = fut.result()
+                games_data.extend(samples)
+                completed += 1
+
+                # Print progress periodically
+                if completed % max(1, max_workers // 2) == 0 or completed == batch_size:
+                    print(f"Self-play progress: {completed}/{batch_size} games completed", end='\r')
+
+            except Exception as e:
+                print("Self-play worker error:", e)
+
+    # Final summary for the batch
+    print(f"\nSelf-play batch finished: {completed} games")
+
+    return games_data
 
 # ==========================================
 # 3. ARENA EVALUATION
@@ -241,7 +285,7 @@ if __name__ == "__main__":
     # Configure optimizer to handle mixed precision if enabled
     opt = tf.keras.optimizers.Adam(LEARNING_RATE)
     try:
-        from tensorflow.keras import mixed_precision as _mp
+        from tensorflow.keras import mixed_precision as _mp # type: ignore
         if _mp.global_policy().name == 'mixed_float16':
             opt = _mp.LossScaleOptimizer(opt)
     except Exception:
@@ -249,6 +293,13 @@ if __name__ == "__main__":
 
     model.compile(optimizer=opt, 
                   loss={'policy': 'categorical_crossentropy', 'value': 'mse'})
+
+    # Pre-compile and warm the model's inference function to avoid tf.function retracing
+    try:
+        ensure_compiled_infer(model)
+        print('Pre-warmed compiled inference function on the model.')
+    except Exception as e:
+        print('Warning: could not pre-warm compiled inference function:', e)
 
     if not os.path.exists(BEST_MODEL_PATH):
         model.save(BEST_MODEL_PATH)
@@ -258,14 +309,15 @@ if __name__ == "__main__":
     for iteration in range(ITERATIONS):
         print(f"\n--- Iteration {iteration+1}/{ITERATIONS} ---")
         
-        # Self Play
+        # Self Play: run a single parallel batch of SELF_PLAY_BATCH games per iteration
         new_samples = 0
-        for i in range(EPISODES_PER_ITER):
-            data = self_play(env, model, MCTS_SIMS) 
-            for sample in data:
-                buffer.add(*sample)
-            new_samples += len(data)
-            print(f"Self-Play {i+1}/{EPISODES_PER_ITER}: Buffer={len(buffer)}", end='\r')
+        b = SELF_PLAY_BATCH
+        print(f"Starting Self-Play batch: {b} games...", end='\r')
+        data_batch = parallel_self_play(env, model, MCTS_SIMS, b)
+        for sample in data_batch:
+            buffer.add(*sample)
+        new_samples += len(data_batch)
+        print(f"Self-Play batch completed: Played {b} games; Buffer={len(buffer)}", end='\r')
         
         # Train
         if len(buffer) > BATCH_SIZE:

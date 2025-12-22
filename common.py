@@ -280,10 +280,27 @@ class MCTS:
 
         # Compiled inference function for faster repeated evaluations
         try:
-            # Use tf.function to compile the model call with training=False
-            self._infer = tf.function(lambda x: self.model(x, training=False))
+            # Cache a compiled inference function on the model to avoid retracing
+            # when many MCTS instances are created (e.g., during parallel self-play).
+            if not hasattr(self.model, "_compiled_infer"):
+                # Try to create an input_signature from the model's input shape
+                sig = None
+                try:
+                    ishape = self.model.input_shape  # (None, H, W, C)
+                    if ishape and len(ishape) == 4 and ishape[1] is not None:
+                        sig = tf.TensorSpec([None, ishape[1], ishape[2], ishape[3]], tf.float32)
+                except Exception:
+                    sig = None
+
+                if sig is not None:
+                    self.model._compiled_infer = tf.function(lambda x: self.model(x, training=False), input_signature=[sig])
+                else:
+                    # Fallback: compile without a signature (less optimal but works)
+                    self.model._compiled_infer = tf.function(lambda x: self.model(x, training=False))
+
+            self._infer = self.model._compiled_infer
         except Exception:
-            # Fallback to direct call if compilation is not possible
+            # Fallback to direct call if compilation or caching fails
             self._infer = lambda x: self.model(x, training=False)
 
     def run(self, board, player, move_count, is_self_play=False, dirichlet_alpha=0.3, dirichlet_epsilon=0.25):
