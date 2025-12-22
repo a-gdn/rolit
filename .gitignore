@@ -11,6 +11,7 @@
 # Ignore the training log directory, which contains large, transient
 # data like TensorBoard logs.
 /logs/
+/models/
 
 # -----------------------------
 # 3. Cache and Other Python Files

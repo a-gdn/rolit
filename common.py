@@ -270,6 +270,14 @@ class MCTS:
         self.N = defaultdict(float) 
         self.P = {}
 
+        # Compiled inference function for faster repeated evaluations
+        try:
+            # Use tf.function to compile the model call with training=False
+            self._infer = tf.function(lambda x: self.model(x, training=False))
+        except Exception:
+            # Fallback to direct call if compilation is not possible
+            self._infer = lambda x: self.model(x, training=False)
+
     def run(self, board, player, move_count, is_self_play=False, dirichlet_alpha=0.3, dirichlet_epsilon=0.25):
         # Clear tree if starting new self-play game to prevent memory bloat over long runs
         if is_self_play and move_count == 0:
@@ -344,10 +352,10 @@ class MCTS:
         # 2. EXPANSION
         if key not in self.P:
             state_input = preprocess_state(board, player, move_count, self.num_players)[np.newaxis, ...]
-            policy, value = self.model.predict(state_input, verbose=0)
-            policy = policy[0]
-            value = value[0][0]
-            
+            predictions = self._infer(state_input)
+            policy = predictions[0].numpy()[0]
+            value = float(predictions[1].numpy()[0][0])
+
             # Mask illegal moves
             mask = np.zeros_like(policy)
             for r, c in legal:
