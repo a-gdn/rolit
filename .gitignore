@@ -12,6 +12,7 @@
 # data like TensorBoard logs.
 /logs/
 /models/
+/.venv/
 
 # -----------------------------
 # 3. Cache and Other Python Files

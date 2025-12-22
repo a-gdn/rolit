@@ -25,6 +25,23 @@ except Exception:
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+# GPU / Metal (Apple) setup: enable memory growth and optional mixed precision
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for g in gpus:
+            tf.config.experimental.set_memory_growth(g, True)
+        print("Detected GPU(s):", gpus)
+    except Exception as e:
+        print("GPU setup error:", e)
+else:
+    print("No GPU detected; running on CPU.")
+
+# Enable mixed precision on capable hardware for better performance
+from tensorflow.keras import mixed_precision # type: ignore
+mixed_precision.set_global_policy('mixed_float16')
+print("Mixed precision policy:", mixed_precision.global_policy().name)
+
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
@@ -221,7 +238,16 @@ if __name__ == "__main__":
         print(f"No models found. Creating new model: {MODEL_PATH}")
         model = build_model(INPUT_PLANES, RESIDUAL_BLOCKS, LEARNING_RATE)
 
-    model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE), 
+    # Configure optimizer to handle mixed precision if enabled
+    opt = tf.keras.optimizers.Adam(LEARNING_RATE)
+    try:
+        from tensorflow.keras import mixed_precision as _mp
+        if _mp.global_policy().name == 'mixed_float16':
+            opt = _mp.LossScaleOptimizer(opt)
+    except Exception:
+        pass
+
+    model.compile(optimizer=opt, 
                   loss={'policy': 'categorical_crossentropy', 'value': 'mse'})
 
     if not os.path.exists(BEST_MODEL_PATH):

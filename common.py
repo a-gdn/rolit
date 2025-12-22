@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers, models, optimizers, regularizers # type: ignore
+from tensorflow.keras import layers, models, optimizers, regularizers, mixed_precision # type: ignore
 import math
 from collections import defaultdict
 import random
@@ -218,10 +218,10 @@ def preprocess_state(board, player, move_count, num_players):
 def residual_block(x, filters):
     shortcut = x
     x = layers.Conv2D(filters, (3,3), padding='same', kernel_regularizer=regularizers.l2(L2_REG))(x)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(dtype='float32')(x)
     x = layers.Activation('relu')(x)
     x = layers.Conv2D(filters, (3,3), padding='same', kernel_regularizer=regularizers.l2(L2_REG))(x)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(dtype='float32')(x)
     x = layers.Add()([x, shortcut])
     x = layers.Activation('relu')(x)
     return x
@@ -230,7 +230,7 @@ def build_model(input_planes, residual_blocks, learning_rate, board_size=BOARD_S
     inputs = layers.Input(shape=(board_size, board_size, input_planes)) 
     
     x = layers.Conv2D(64, (3,3), padding='same', kernel_regularizer=regularizers.l2(L2_REG))(inputs)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(dtype='float32')(x)
     x = layers.Activation('relu')(x)
     
     for _ in range(residual_blocks):
@@ -238,21 +238,29 @@ def build_model(input_planes, residual_blocks, learning_rate, board_size=BOARD_S
         
     # Policy Head
     ph = layers.Conv2D(2, (1,1), padding='same', kernel_regularizer=regularizers.l2(L2_REG))(x)
-    ph = layers.BatchNormalization()(ph)
+    ph = layers.BatchNormalization(dtype='float32')(ph)
     ph = layers.Activation('relu')(ph)
     ph = layers.Flatten()(ph)
-    ph = layers.Dense(board_size * board_size, activation='softmax', name='policy')(ph)
+    ph = layers.Dense(board_size * board_size, activation='softmax', name='policy', dtype='float32')(ph)
     
     # Value Head
     vh = layers.Conv2D(1, (1,1), padding='same', kernel_regularizer=regularizers.l2(L2_REG))(x)
-    vh = layers.BatchNormalization()(vh)
+    vh = layers.BatchNormalization(dtype='float32')(vh)
     vh = layers.Activation('relu')(vh)
     vh = layers.Flatten()(vh)
     vh = layers.Dense(64, activation='relu', kernel_regularizer=regularizers.l2(L2_REG))(vh)
-    vh = layers.Dense(1, activation='tanh', name='value')(vh)
+    vh = layers.Dense(1, activation='tanh', name='value', dtype='float32')(vh)
     
     model = models.Model(inputs=inputs, outputs=[ph, vh])
-    model.compile(optimizer=optimizers.Adam(learning_rate), 
+
+    opt = optimizers.Adam(learning_rate)
+    try:
+        if mixed_precision.global_policy().name == 'mixed_float16':
+            opt = mixed_precision.LossScaleOptimizer(opt)
+    except Exception:
+        pass
+
+    model.compile(optimizer=opt, 
                   loss={'policy': 'categorical_crossentropy', 'value': 'mse'})
     return model
 
